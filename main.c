@@ -17,12 +17,29 @@ static const bool enableValidationLayers = true;
 
 void error_log(const char *s);
 bool checkValidationLayerSupport();
+VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+    VkDebugUtilsMessageTypeFlagsEXT messageType,
+    const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData);
+
+VkResult CreateDebugUtilsMessengerEXT(
+    VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT *pCreateInfo,
+    const VkAllocationCallbacks *pAllocator,
+    VkDebugUtilsMessengerEXT *pDebugMessenger);
+
+void DestroyDebugUtilsMessengerEXT(VkInstance instance,
+                                   VkDebugUtilsMessengerEXT debugMessenger,
+                                   const VkAllocationCallbacks *pAllocator);
+
+void populateDebugMessengerCreateInfo(
+    VkDebugUtilsMessengerCreateInfoEXT *createInfo);
 
 int main(int argc, char *argv[]) {
     int rc = 0;
     bool running = true;
 
-    VkInstance instance;
+    VkInstance instance = NULL;
+    VkDebugUtilsMessengerEXT debugMessenger = NULL;
 
     /* init sdl */
     rc = SDL_Init(SDL_INIT_VIDEO);
@@ -86,15 +103,28 @@ int main(int argc, char *argv[]) {
     }
 
     extensionIndex += sdlExtensionCount;
+    if (enableValidationLayers) {
+        /* This is from the original getRequiredExtensions() function,
+           c++ hide a lot of stuffs by extracting one-use function. */
+        extensions[extensionIndex] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+        extensionIndex += 1;
+    }
 
     createInfo.enabledExtensionCount = extensionIndex;
     createInfo.ppEnabledExtensionNames = extensions;
+
+    VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo = { 0 };
     if (enableValidationLayers) {
         createInfo.enabledLayerCount =
             sizeof(validationLayers) / sizeof(char *);
         createInfo.ppEnabledLayerNames = validationLayers;
+
+        populateDebugMessengerCreateInfo(&debugCreateInfo);
+        createInfo.pNext =
+            (VkDebugUtilsMessengerCreateInfoEXT *)&debugCreateInfo;
     } else {
         createInfo.enabledLayerCount = 0;
+        createInfo.pNext = NULL;
     }
 
     if (vkCreateInstance(&createInfo, NULL, &instance) != VK_SUCCESS) {
@@ -103,6 +133,31 @@ int main(int argc, char *argv[]) {
     }
 
     free(extensions);
+
+    /* setup debug messenger */
+    if (enableValidationLayers) {
+        VkDebugUtilsMessengerCreateInfoEXT createInfo = { 0 };
+        /* populateDebugMessengerCreateInfo(&createInfo); */
+        createInfo.sType =
+            VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+        createInfo.messageSeverity =
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+        createInfo.messageType =
+            VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+            VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+        createInfo.pfnUserCallback = debugCallback;
+
+        VkResult result = CreateDebugUtilsMessengerEXT(instance, &createInfo,
+                                                       NULL, &debugMessenger);
+        if (result != VK_SUCCESS) {
+            printf("result: %d\n", result);
+            error_log("failed to set up debug messenger!");
+            return 1;
+        }
+    }
 
     /* main loop */
     while (running) {
@@ -118,7 +173,12 @@ int main(int argc, char *argv[]) {
     }
 
     /* clean up */
+    if (enableValidationLayers) {
+        DestroyDebugUtilsMessengerEXT(instance, debugMessenger, NULL);
+    }
+
     vkDestroyInstance(instance, NULL);
+
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
@@ -156,4 +216,56 @@ bool checkValidationLayerSupport() {
 
     free(availableLayers);
     return true;
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL
+debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+              VkDebugUtilsMessageTypeFlagsEXT messageType,
+              const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
+              void *pUserData) {
+    char s[MSG_LEN] = { 0 };
+    sprintf(s, "validation layer: %s", pCallbackData->pMessage);
+    error_log(s);
+
+    return VK_FALSE;
+}
+
+VkResult CreateDebugUtilsMessengerEXT(
+    VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT *pCreateInfo,
+    const VkAllocationCallbacks *pAllocator,
+    VkDebugUtilsMessengerEXT *pDebugMessenger) {
+    PFN_vkCreateDebugUtilsMessengerEXT func =
+        (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
+            instance, "vkCreateDebugUtilsMessengerEXT");
+    printf("%p\n", func);
+    if (func != NULL) {
+        return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
+    } else {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+}
+
+void DestroyDebugUtilsMessengerEXT(VkInstance instance,
+                                   VkDebugUtilsMessengerEXT debugMessenger,
+                                   const VkAllocationCallbacks *pAllocator) {
+    PFN_vkDestroyDebugUtilsMessengerEXT func =
+        (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
+            instance, "vkDestroyDebugUtilsMessengerEXT");
+    if (func != NULL) {
+        func(instance, debugMessenger, pAllocator);
+    }
+}
+
+void populateDebugMessengerCreateInfo(
+    VkDebugUtilsMessengerCreateInfoEXT *createInfo) {
+    memset(createInfo, 0, sizeof(VkDebugUtilsMessengerCreateInfoEXT));
+    createInfo->sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    createInfo->messageSeverity =
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    createInfo->messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                              VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                              VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    createInfo->pfnUserCallback = debugCallback;
 }
