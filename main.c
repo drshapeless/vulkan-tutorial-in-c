@@ -33,6 +33,7 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance,
 
 void populateDebugMessengerCreateInfo(
     VkDebugUtilsMessengerCreateInfoEXT *createInfo);
+bool isDeviceSuitable(VkPhysicalDevice device);
 
 int main(int argc, char *argv[]) {
     int rc = 0;
@@ -40,6 +41,7 @@ int main(int argc, char *argv[]) {
 
     VkInstance instance = NULL;
     VkDebugUtilsMessengerEXT debugMessenger = NULL;
+    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
     /* init sdl */
     rc = SDL_Init(SDL_INIT_VIDEO);
@@ -159,6 +161,32 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    /* pick physical device */
+    uint32_t deviceCount = 0;
+    vkEnumeratePhysicalDevices(instance, &deviceCount, NULL);
+    if (deviceCount == 0) {
+        error_log("failed to find GPUs with Vulkan support!");
+        return 1;
+    }
+
+    VkPhysicalDevice *devices =
+        malloc(sizeof(VkPhysicalDevice *) * deviceCount);
+    vkEnumeratePhysicalDevices(instance, &deviceCount, devices);
+
+    for (int i = 0; i < deviceCount; i++) {
+        if (isDeviceSuitable(devices[i])) {
+            physicalDevice = devices[i];
+            break;
+        }
+    }
+
+    if (physicalDevice == VK_NULL_HANDLE) {
+        error_log("failed to find a suitable GPU!");
+        return 1;
+    }
+
+    free(devices);
+
     /* main loop */
     while (running) {
         /* process event */
@@ -268,4 +296,8 @@ void populateDebugMessengerCreateInfo(
                               VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
                               VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
     createInfo->pfnUserCallback = debugCallback;
+}
+
+bool isDeviceSuitable(VkPhysicalDevice device) {
+    return true;
 }
