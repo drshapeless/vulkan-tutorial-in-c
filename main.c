@@ -87,6 +87,7 @@ int main(int argc, char *argv[]) {
     VkDevice device = NULL;
     VkQueue graphicsQueue = NULL;
     VkSurfaceKHR surface = NULL;
+    VkQueue presentQueue = NULL;
 
     /* init sdl */
     rc = SDL_Init(SDL_INIT_VIDEO);
@@ -249,20 +250,43 @@ int main(int argc, char *argv[]) {
     {
         struct QueueFamilyIndices indices =
             findQueueFamilies(physicalDevice, surface);
-        VkDeviceQueueCreateInfo queueCreateInfo = { 0 };
-        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueCreateInfo.queueFamilyIndex = indices.graphicsFamily;
-        queueCreateInfo.queueCount = 1;
+
+        /* originally here use a set */
+        /* we cannot do it in C */
+        VkDeviceQueueCreateInfo queueCreateInfos[QUEUE_CREATE_INFOS_SIZE] = {
+            0
+        };
+
+        /* the reason why the original tutorial use a set here is
+           because the graphicsFamily and the presentFamily may be the
+           same, and using a set eliminate the duplicated one */
+
+        /* use a stupid loop to check whether the newly added value is
+           unique, we have to separate it into another function */
+        int uniqueQueueFamiliesSize = 0;
+        uint32_t uniqueQueueFamilies[QUEUE_CREATE_INFOS_SIZE] = { 0 };
+        add_to_unique_set(uniqueQueueFamilies, &uniqueQueueFamiliesSize,
+                          indices.graphicsFamily);
+        add_to_unique_set(uniqueQueueFamilies, &uniqueQueueFamiliesSize,
+                          indices.presentFamily);
+
         float queuePriority = 1.0f;
-        queueCreateInfo.pQueuePriorities = &queuePriority;
+        for (int i = 0; i < uniqueQueueFamiliesSize; i++) {
+            VkDeviceQueueCreateInfo queueCreateInfo = { 0 };
+            queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queueCreateInfo.queueFamilyIndex = uniqueQueueFamilies[i];
+            queueCreateInfo.queueCount = 1;
+            queueCreateInfo.pQueuePriorities = &queuePriority;
+            queueCreateInfos[i] = queueCreateInfo;
+        }
 
         VkPhysicalDeviceFeatures deviceFeatures = { 0 };
 
         VkDeviceCreateInfo createInfo = { 0 };
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        createInfo.pQueueCreateInfos = &queueCreateInfo;
-        createInfo.queueCreateInfoCount = 1;
-
+        createInfo.queueCreateInfoCount = QUEUE_CREATE_INFOS_SIZE;
+        createInfo.pQueueCreateInfos = queueCreateInfos;
+        createInfo.queueCreateInfoCount = uniqueQueueFamiliesSize;
         createInfo.pEnabledFeatures = &deviceFeatures;
         createInfo.enabledExtensionCount = 0;
 
@@ -279,6 +303,9 @@ int main(int argc, char *argv[]) {
             error_log("failed to create logical device!");
             return 1;
         }
+
+        vkGetDeviceQueue(device, indices.graphicsFamily, 0, &graphicsQueue);
+        vkGetDeviceQueue(device, indices.presentFamily, 0, &presentQueue);
     }
     /* main loop */
     while (running) {
@@ -424,6 +451,8 @@ struct QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device,
                                              &presentSupport);
         if (presentSupport) {
             indices.presentFamily = i;
+            /* work around of optional */
+            indices.presentFamilyHasValue = true;
         }
 
         if (QueueFamilyIndicesIsComplete(&indices)) {

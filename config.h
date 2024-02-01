@@ -6,4 +6,6 @@
 static const int WIDTH = 800;
 static const int HEIGHT = 600;
 
+#define QUEUE_CREATE_INFOS_SIZE 2
+
 #endif /* CONFIG_H */
