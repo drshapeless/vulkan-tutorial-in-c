@@ -1,6 +1,7 @@
 #include "config.h"
 
 #include <vulkan/vulkan.h>
+#include <vulkan/vulkan_wayland.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -15,7 +16,24 @@ static const bool enableValidationLayers = false;
 static const bool enableValidationLayers = true;
 #endif
 
-void error_log(const char *s);
+void error_log(const char *format, ...);
+void add_to_unique_set(uint32_t *set, int *size, uint32_t value) {
+    /* TODO: make a binary search here, like a real set */
+    bool should_add = true;
+
+    for (int i = 0; i < *size; i++) {
+        if (set[i] == value) {
+            should_add = false;
+            break;
+        }
+    }
+
+    if (should_add) {
+        set[*size] = value;
+        *size += 1;
+    }
+}
+
 bool checkValidationLayerSupport();
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -127,6 +145,10 @@ int main(int argc, char *argv[]) {
         extensions[1] = "VK_KHR_get_physical_device_properties2";
         createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
         extensionIndex += 2;
+#elif defined __linux__
+        extensions[0] = VK_KHR_SURFACE_EXTENSION_NAME;
+        extensions[1] = VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME;
+        extensionIndex += 2;
 #endif
         for (int i = 0; i < sdlExtensionCount; i++) {
             extensions[extensionIndex + i] = sdlExtensions[i];
@@ -191,7 +213,7 @@ int main(int argc, char *argv[]) {
 
     /* create surface */
     if (SDL_Vulkan_CreateSurface(window, instance, &surface) != SDL_TRUE) {
-        error_log("failed to create window surface!");
+        error_log("failed to create window surface! %s", SDL_GetError());
         return 1;
     }
 
@@ -286,8 +308,12 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-void error_log(const char *s) {
-    fprintf(stderr, "%s\n", s);
+void error_log(const char *s, ...) {
+    va_list argptr;
+    va_start(argptr, s);
+    vfprintf(stderr, s, argptr);
+    va_end(argptr);
+    fprintf(stderr, "\n");
 }
 
 bool checkValidationLayerSupport() {
