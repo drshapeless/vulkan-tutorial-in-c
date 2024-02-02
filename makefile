@@ -11,10 +11,10 @@ sample: $(OBJ) shaders
 	$(CC) -o $@ $(OBJ) $(LDFLAGS)
 
 shaders:
-	glslc shaders/shader.vert -o shaders/vert.spv
-	glslc shaders/shader.frag -o shaders/frag.spv
+	$(MAKE) -C shaders
 
 clean:
 	rm -f sample $(OBJ)
+	$(MAKE) -C shaders clean
 
 .PHONY: all clean shaders
