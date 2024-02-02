@@ -9,7 +9,6 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_vulkan.h>
 
-static const char *validationLayers[] = { "VK_LAYER_KHRONOS_validation" };
 #ifdef NDEBUG
 static const bool enableValidationLayers = false;
 #else
@@ -52,6 +51,7 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance,
 void populateDebugMessengerCreateInfo(
     VkDebugUtilsMessengerCreateInfoEXT *createInfo);
 bool isDeviceSuitable(VkPhysicalDevice device, VkSurfaceKHR surface);
+bool checkDeviceExtensionSupport(VkPhysicalDevice device);
 struct QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device,
                                             VkSurfaceKHR surface);
 
@@ -77,6 +77,28 @@ bool QueueFamilyIndicesIsComplete(
            queueFamiliyIndices->presentFamilyHasValue;
 }
 
+struct SwapChainSupportDetails {
+    VkSurfaceCapabilitiesKHR capabilities;
+    VkSurfaceFormatKHR *formats;
+    int formatsSize;
+    VkPresentModeKHR *presentModes;
+    int presentModesSize;
+};
+
+struct SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device,
+                                                     VkSurfaceKHR surface);
+void DestroySwapChainSupportDetails(struct SwapChainSupportDetails *details) {
+    free(details->formats);
+    free(details->presentModes);
+}
+
+VkSurfaceFormatKHR
+chooseSwapSurfaceFormat(const VkSurfaceFormatKHR *availableFormats, int size);
+VkPresentModeKHR
+chooseSwapPresentMode(const VkPresentModeKHR *availablePresentModes, int size);
+VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR *capabilities,
+                            SDL_Window *window);
+
 int main(int argc, char *argv[]) {
     int rc = 0;
     bool running = true;
@@ -88,6 +110,10 @@ int main(int argc, char *argv[]) {
     VkQueue graphicsQueue = NULL;
     VkSurfaceKHR surface = NULL;
     VkQueue presentQueue = NULL;
+    VkSwapchainKHR swapChain = NULL;
+    VkImage *swapChainImages = NULL;
+    VkFormat swapChainImageFormat = { 0 };
+    VkExtent2D swapChainExtent = { 0 };
 
     /* init sdl */
     rc = SDL_Init(SDL_INIT_VIDEO);
@@ -288,7 +314,8 @@ int main(int argc, char *argv[]) {
         createInfo.pQueueCreateInfos = queueCreateInfos;
         createInfo.queueCreateInfoCount = uniqueQueueFamiliesSize;
         createInfo.pEnabledFeatures = &deviceFeatures;
-        createInfo.enabledExtensionCount = 0;
+        createInfo.enabledExtensionCount = DEVICE_EXTENSIONS_COUNT;
+        createInfo.ppEnabledExtensionNames = deviceExtensions;
 
         if (enableValidationLayers) {
             createInfo.enabledLayerCount =
@@ -307,6 +334,71 @@ int main(int argc, char *argv[]) {
         vkGetDeviceQueue(device, indices.graphicsFamily, 0, &graphicsQueue);
         vkGetDeviceQueue(device, indices.presentFamily, 0, &presentQueue);
     }
+
+    /* create swap chain */
+    {
+        struct SwapChainSupportDetails swapChainSupport =
+            querySwapChainSupport(physicalDevice, surface);
+
+        VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(
+            swapChainSupport.formats, swapChainSupport.formatsSize);
+        VkPresentModeKHR presentMode = chooseSwapPresentMode(
+            swapChainSupport.presentModes, swapChainSupport.presentModesSize);
+        VkExtent2D extent =
+            chooseSwapExtent(&swapChainSupport.capabilities, window);
+
+        uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+        if (swapChainSupport.capabilities.maxImageCount > 0 &&
+            imageCount > swapChainSupport.capabilities.maxImageCount) {
+            imageCount = swapChainSupport.capabilities.maxImageCount;
+        }
+
+        VkSwapchainCreateInfoKHR createInfo = { 0 };
+        createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        createInfo.surface = surface;
+        createInfo.minImageCount = imageCount;
+        createInfo.imageFormat = surfaceFormat.format;
+        createInfo.imageColorSpace = surfaceFormat.colorSpace;
+        createInfo.imageExtent = extent;
+        createInfo.imageArrayLayers = 1;
+        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        struct QueueFamilyIndices indices =
+            findQueueFamilies(physicalDevice, surface);
+        uint32_t queueFamilyIndices[] = { indices.graphicsFamily,
+                                          indices.presentFamily };
+
+        if (indices.graphicsFamily != indices.presentFamily) {
+            createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+            createInfo.queueFamilyIndexCount = 2;
+            createInfo.pQueueFamilyIndices = queueFamilyIndices;
+        } else {
+            createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            createInfo.queueFamilyIndexCount = 0; // Optional
+            createInfo.pQueueFamilyIndices = NULL; // Optional
+        }
+        createInfo.preTransform =
+            swapChainSupport.capabilities.currentTransform;
+        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        createInfo.presentMode = presentMode;
+        createInfo.clipped = VK_TRUE;
+        createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+        if (vkCreateSwapchainKHR(device, &createInfo, NULL, &swapChain) !=
+            VK_SUCCESS) {
+            error_log("failed to create swap chain!");
+            return 1;
+        }
+
+        vkGetSwapchainImagesKHR(device, swapChain, &imageCount, NULL);
+        swapChainImages = malloc(sizeof(VkImage) * imageCount);
+        vkGetSwapchainImagesKHR(device, swapChain, &imageCount,
+                                swapChainImages);
+
+        swapChainImageFormat = surfaceFormat.format;
+        swapChainExtent = extent;
+    }
+
     /* main loop */
     while (running) {
         /* process event */
@@ -321,6 +413,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* clean up */
+    vkDestroySwapchainKHR(device, swapChain, NULL);
     vkDestroyDevice(device, NULL);
 
     if (enableValidationLayers) {
@@ -427,8 +520,61 @@ void populateDebugMessengerCreateInfo(
 bool isDeviceSuitable(VkPhysicalDevice device, VkSurfaceKHR surface) {
     struct QueueFamilyIndices indices = findQueueFamilies(device, surface);
 
-    return QueueFamilyIndicesIsComplete(&indices);
+    bool extensionsSupported = checkDeviceExtensionSupport(device);
+
+    bool swapChainAdequate = false;
+    if (extensionsSupported) {
+        struct SwapChainSupportDetails swapChainSupport =
+            querySwapChainSupport(device, surface);
+        /* originally the tutorial check for empty vector here */
+        /* in my case, the formats and presentModes will be NULL if
+           the malloc did not happened */
+        swapChainAdequate = swapChainSupport.formats != NULL &&
+                            swapChainSupport.presentModes != NULL;
+
+        /* since we used malloc before, free it using a custom function */
+        DestroySwapChainSupportDetails(&swapChainSupport);
+    }
+
+    return QueueFamilyIndicesIsComplete(&indices) && extensionsSupported &&
+           swapChainAdequate;
 }
+
+bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
+    uint32_t extensionCount;
+    vkEnumerateDeviceExtensionProperties(device, NULL, &extensionCount, NULL);
+
+    VkExtensionProperties *availableExtensions =
+        malloc(sizeof(VkExtensionProperties) * extensionCount);
+    vkEnumerateDeviceExtensionProperties(device, NULL, &extensionCount,
+                                         availableExtensions);
+
+    /* I hate seeing the set in C++ */
+    /* again, the tutorial uses a set to eliminate duplicated data */
+
+    /* luckily, this time, it says we can use a loop like
+       checkValidationLayerSupport */
+    for (int i = 0; i < sizeof(deviceExtensions) / sizeof(char *); i++) {
+        bool found = false;
+        for (int j = 0; j < extensionCount; j++) {
+            if (strcmp(deviceExtensions[i],
+                       availableExtensions[j].extensionName) == 0) {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            free(availableExtensions);
+            return false;
+        }
+    }
+
+    free(availableExtensions);
+
+    return true;
+}
+
 struct QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device,
                                             VkSurfaceKHR surface) {
     struct QueueFamilyIndices indices = { 0 };
@@ -462,4 +608,87 @@ struct QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device,
 
     free(queueFamilies);
     return indices;
+}
+
+struct SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device,
+                                                     VkSurfaceKHR surface) {
+    struct SwapChainSupportDetails details = { 0 };
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface,
+                                              &details.capabilities);
+
+    uint32_t formatCount;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, NULL);
+    if (formatCount != 0) {
+        details.formats = malloc(sizeof(VkSurfaceFormatKHR) * formatCount);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount,
+                                             details.formats);
+        details.formatsSize = formatCount;
+    }
+
+    uint32_t presentModeCount;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface,
+                                              &presentModeCount, NULL);
+    if (presentModeCount != 0) {
+        details.presentModes =
+            malloc(sizeof(VkPresentModeKHR) * presentModeCount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(
+            device, surface, &presentModeCount, details.presentModes);
+        details.presentModesSize = presentModeCount;
+    }
+
+    return details;
+}
+
+VkSurfaceFormatKHR
+chooseSwapSurfaceFormat(const VkSurfaceFormatKHR *availableFormats, int size) {
+    /* make sure availableFormats is not NULL */
+    for (int i = 0; i < size; i++) {
+        if (availableFormats[i].format == VK_FORMAT_B8G8R8A8_SRGB &&
+            availableFormats[i].colorSpace ==
+                VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            return availableFormats[i];
+        }
+    }
+
+    return availableFormats[0];
+}
+
+VkPresentModeKHR
+chooseSwapPresentMode(const VkPresentModeKHR *availablePresentModes, int size) {
+    /* make sure availablePresentModes is not NULL */
+    for (int i = 0; i < size; i++) {
+        if (availablePresentModes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
+            return availablePresentModes[i];
+        }
+    }
+
+    return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+/* a custom clamp function from https://stackoverflow.com/questions/427477/fastest-way-to-clamp-a-real-fixed-floating-point-value */
+uint32_t clamp(uint32_t v, uint32_t lo, uint32_t hi) {
+    const uint32_t t = v < lo ? lo : v;
+    return t > hi ? hi : t;
+}
+
+VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR *capabilities,
+                            SDL_Window *window) {
+    /* std::numeric_limits<uint32_t>::max() should equal to UINT32_MAX */
+    if (capabilities->currentExtent.width != UINT32_MAX) {
+        return capabilities->currentExtent;
+    } else {
+        int width = 0;
+        int height = 0;
+        SDL_Vulkan_GetDrawableSize(window, &width, &height);
+
+        VkExtent2D actualExtent = { (uint32_t)width, (uint32_t)height };
+        actualExtent.width = clamp(actualExtent.width,
+                                   capabilities->minImageExtent.width,
+                                   capabilities->maxImageExtent.width);
+        actualExtent.height = clamp(actualExtent.height,
+                                    capabilities->minImageExtent.height,
+                                    capabilities->maxImageExtent.height);
+
+        return actualExtent;
+    }
 }
