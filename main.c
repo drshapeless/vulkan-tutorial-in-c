@@ -101,6 +101,10 @@ chooseSwapPresentMode(const VkPresentModeKHR *availablePresentModes, int size);
 VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR *capabilities,
                             SDL_Window *window);
 
+char *readFile(const char *filename, uint32_t *size);
+VkShaderModule createShaderModule(VkDevice device, const char *code,
+                                  uint32_t size);
+
 int main(int argc, char *argv[]) {
     int rc = 0;
     bool running = true;
@@ -433,6 +437,20 @@ int main(int argc, char *argv[]) {
     }
 
     /* create graphics pipeline */
+    uint32_t vertShaderSize = 0;
+    char *vertShaderCode = readFile("shaders/vert.spv", &vertShaderSize);
+    uint32_t fragShaderSize = 0;
+    char *fragShaderCode = readFile("shaders/frag.spv", &fragShaderSize);
+
+    VkShaderModule vertShaderModule =
+        createShaderModule(device, vertShaderCode, vertShaderSize);
+    VkShaderModule fragShaderModule =
+        createShaderModule(device, fragShaderCode, fragShaderSize);
+
+    vkDestroyShaderModule(device, fragShaderModule, NULL);
+    vkDestroyShaderModule(device, vertShaderModule, NULL);
+    free(vertShaderCode);
+    free(fragShaderCode);
 
     /* main loop */
     while (running) {
@@ -731,4 +749,43 @@ VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR *capabilities,
 
         return actualExtent;
     }
+}
+
+char *readFile(const char *filename, uint32_t *size) {
+    /* this function in not null-terminated */
+    FILE *fp = fopen(filename, "rb");
+
+    if (fp == NULL) {
+        error_log("failed to open file!");
+        return NULL;
+    }
+
+    fseek(fp, 0, SEEK_END);
+    *size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    char *s = malloc(sizeof(char) * *size);
+
+    fread(s, sizeof(char), *size, fp);
+
+    fclose(fp);
+
+    return s;
+}
+
+VkShaderModule createShaderModule(VkDevice device, const char *code,
+                                  uint32_t size) {
+    VkShaderModuleCreateInfo createInfo = { 0 };
+    createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createInfo.codeSize = size;
+    createInfo.pCode = (uint32_t *)code;
+
+    VkShaderModule shaderModule = NULL;
+    if (vkCreateShaderModule(device, &createInfo, NULL, &shaderModule) !=
+        VK_SUCCESS) {
+        error_log("failed to create shader module!");
+        exit(1);
+    }
+
+    return shaderModule;
 }
