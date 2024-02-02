@@ -2,6 +2,8 @@
 
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_wayland.h>
+#include <vulkan/vulkan_metal.h>
+#include <vulkan/vulkan_beta.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -156,8 +158,7 @@ int main(int argc, char *argv[]) {
 
         if (SDL_Vulkan_GetInstanceExtensions(window, &sdlExtensionCount,
                                              sdlExtensions) == SDL_FALSE) {
-            error_log("cannot get instance extensions");
-            error_log(SDL_GetError());
+            error_log("cannot get instance extensions %s", SDL_GetError());
             return 1;
         }
 
@@ -169,9 +170,11 @@ int main(int argc, char *argv[]) {
 
 #ifdef __APPLE__
         extensions[0] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
-        extensions[1] = "VK_KHR_get_physical_device_properties2";
+        extensions[1] = VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
+        extensions[2] = VK_EXT_METAL_SURFACE_EXTENSION_NAME;
+        extensions[3] = VK_KHR_SURFACE_EXTENSION_NAME;
         createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
-        extensionIndex += 2;
+        extensionIndex += 4;
 #elif defined __linux__
         extensions[0] = VK_KHR_SURFACE_EXTENSION_NAME;
         extensions[1] = VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME;
