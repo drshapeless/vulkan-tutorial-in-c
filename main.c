@@ -105,6 +105,8 @@ char *readFile(const char *filename, uint32_t *size);
 VkShaderModule createShaderModule(VkDevice device, const char *code,
                                   uint32_t size);
 
+/* void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex); */
+
 int main(int argc, char *argv[]) {
     int rc = 0;
     bool running = true;
@@ -127,6 +129,8 @@ int main(int argc, char *argv[]) {
     VkPipelineLayout pipelineLayout = NULL;
     VkPipeline graphicsPipeline = NULL;
     VkFramebuffer *swapChainFramebuffers = NULL;
+    VkCommandPool commandPool = NULL;
+    VkCommandBuffer commandBuffer = NULL;
 
     /* init sdl */
     rc = SDL_Init(SDL_INIT_VIDEO);
@@ -517,28 +521,26 @@ int main(int argc, char *argv[]) {
         inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         inputAssembly.primitiveRestartEnable = VK_FALSE;
 
-        VkViewport viewport = { 0 };
-        viewport.x = 0.0f;
-        viewport.y = 0.0f;
-        viewport.width = (float)swapChainExtent.width;
-        viewport.height = (float)swapChainExtent.height;
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
+        /* VkViewport viewport = { 0 }; */
+        /* viewport.x = 0.0f; */
+        /* viewport.y = 0.0f; */
+        /* viewport.width = (float)swapChainExtent.width; */
+        /* viewport.height = (float)swapChainExtent.height; */
+        /* viewport.minDepth = 0.0f; */
+        /* viewport.maxDepth = 1.0f; */
 
-        VkRect2D scissor = { 0 };
-        VkOffset2D offset = { 0, 0 };
-        scissor.offset = offset;
-        scissor.extent = swapChainExtent;
+        /* VkRect2D scissor = { 0 }; */
+        /* VkOffset2D offset = { 0, 0 }; */
+        /* scissor.offset = offset; */
+        /* scissor.extent = swapChainExtent; */
 
         VkPipelineViewportStateCreateInfo viewportState = { 0 };
         viewportState.sType =
             VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
         viewportState.viewportCount = 1;
-        viewportState.pViewports = &viewport;
+        /* viewportState.pViewports = &viewport; */
         viewportState.scissorCount = 1;
-        viewportState.pScissors = &scissor;
-
-        /* note: I am using the static instead of dynamic approach here */
+        /* viewportState.pScissors = &scissor; */
 
         VkPipelineRasterizationStateCreateInfo rasterizer = { 0 };
         rasterizer.sType =
@@ -592,6 +594,15 @@ int main(int argc, char *argv[]) {
         colorBlending.blendConstants[2] = 0.0f; // Optional
         colorBlending.blendConstants[3] = 0.0f; // Optional
 
+        VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT,
+                                           VK_DYNAMIC_STATE_SCISSOR };
+        VkPipelineDynamicStateCreateInfo dynamicState = { 0 };
+        dynamicState.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dynamicState.dynamicStateCount =
+            (uint32_t)2; /* TODO: size of dynamic states */
+        dynamicState.pDynamicStates = dynamicStates;
+
         VkPipelineLayoutCreateInfo pipelineLayoutInfo = { 0 };
         pipelineLayoutInfo.sType =
             VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -617,7 +628,7 @@ int main(int argc, char *argv[]) {
         pipelineInfo.pMultisampleState = &multisampling;
         pipelineInfo.pDepthStencilState = NULL; // Optional
         pipelineInfo.pColorBlendState = &colorBlending;
-        /* pipelineInfo.pDynamicState = &dynamicState; */
+        pipelineInfo.pDynamicState = &dynamicState;
         pipelineInfo.layout = pipelineLayout;
         pipelineInfo.renderPass = renderPass;
         pipelineInfo.subpass = 0;
@@ -660,6 +671,37 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    /* create command pool */
+    {
+        struct QueueFamilyIndices queueFamilyIndices =
+            findQueueFamilies(physicalDevice, surface);
+
+        VkCommandPoolCreateInfo poolInfo = { 0 };
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily;
+        if (vkCreateCommandPool(device, &poolInfo, NULL, &commandPool) !=
+            VK_SUCCESS) {
+            error_log("failed to create command pool!");
+            return 1;
+        }
+    }
+
+    /* create command buffer */
+    {
+        VkCommandBufferAllocateInfo allocInfo = { 0 };
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandPool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = 1;
+
+        if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) !=
+            VK_SUCCESS) {
+            error_log("failed to allocate command buffers!");
+            return 1;
+        }
+    }
+
     /* main loop */
     while (running) {
         /* process event */
@@ -674,6 +716,8 @@ int main(int argc, char *argv[]) {
     }
 
     /* clean up */
+    vkDestroyCommandPool(device, commandPool, NULL);
+
     for (int i = 0; i < swapChainImagesCount; i++) {
         vkDestroyFramebuffer(device, swapChainFramebuffers[i], NULL);
     }
@@ -1009,4 +1053,60 @@ VkShaderModule createShaderModule(VkDevice device, const char *code,
     }
 
     return shaderModule;
+}
+
+void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
+                         VkRenderPass renderPass,
+                         VkFramebuffer *swapChainFramebuffers,
+                         VkExtent2D swapChainExtent,
+                         VkPipeline graphicsPipeline) {
+    VkCommandBufferBeginInfo beginInfo = { 0 };
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = 0; // Optional
+    beginInfo.pInheritanceInfo = NULL; // Optional
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+        error_log("failed to begin recording command buffer!");
+        exit(1);
+    }
+
+    VkRenderPassBeginInfo renderPassInfo = { 0 };
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = renderPass;
+    renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
+    VkOffset2D offset = { 0, 0 };
+    renderPassInfo.renderArea.offset = offset;
+    renderPassInfo.renderArea.extent = swapChainExtent;
+
+    VkClearValue clearColor = { { { 0.0f, 0.0f, 0.0f, 1.0f } } };
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+
+    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo,
+                         VK_SUBPASS_CONTENTS_INLINE);
+
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      graphicsPipeline);
+
+    VkViewport viewport = { 0 };
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)swapChainExtent.width;
+    viewport.height = (float)swapChainExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor = { 0 };
+    scissor.offset.x = 0;
+    scissor.offset.y = 0;
+    scissor.extent = swapChainExtent;
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+    vkCmdEndRenderPass(commandBuffer);
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+        error_log("failed to record command buffer!");
+        exit(1);
+    }
 }
