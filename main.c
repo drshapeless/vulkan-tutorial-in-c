@@ -114,8 +114,11 @@ int main(int argc, char *argv[]) {
     VkQueue presentQueue = NULL;
     VkSwapchainKHR swapChain = NULL;
     VkImage *swapChainImages = NULL;
+    uint32_t swapChainImagesCount =
+        0; /* custom variable, workaround for vector */
     VkFormat swapChainImageFormat = { 0 };
     VkExtent2D swapChainExtent = { 0 };
+    VkImageView *swapChainImageViews = NULL;
 
     /* init sdl */
     rc = SDL_Init(SDL_INIT_VIDEO);
@@ -397,10 +400,39 @@ int main(int argc, char *argv[]) {
         swapChainImages = malloc(sizeof(VkImage) * imageCount);
         vkGetSwapchainImagesKHR(device, swapChain, &imageCount,
                                 swapChainImages);
+        swapChainImagesCount = imageCount;
 
         swapChainImageFormat = surfaceFormat.format;
         swapChainExtent = extent;
     }
+
+    /* create image views */
+
+    swapChainImageViews = malloc(sizeof(VkImageView) * swapChainImagesCount);
+    /* this malloc is free by vkDestroyImageView */
+    for (int i = 0; i < swapChainImagesCount; i++) {
+        VkImageViewCreateInfo createInfo = { 0 };
+        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        createInfo.image = swapChainImages[i];
+        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        createInfo.format = swapChainImageFormat;
+        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        createInfo.subresourceRange.baseMipLevel = 0;
+        createInfo.subresourceRange.levelCount = 1;
+        createInfo.subresourceRange.baseArrayLayer = 0;
+        createInfo.subresourceRange.layerCount = 1;
+        if (vkCreateImageView(device, &createInfo, NULL,
+                              &swapChainImageViews[i]) != VK_SUCCESS) {
+            error_log("failed to create image views!");
+            return 1;
+        }
+    }
+
+    /* create graphics pipeline */
 
     /* main loop */
     while (running) {
@@ -416,6 +448,11 @@ int main(int argc, char *argv[]) {
     }
 
     /* clean up */
+    for (int i = 0; i < swapChainImagesCount; i++) {
+        vkDestroyImageView(device, swapChainImageViews[i], NULL);
+    }
+
+    free(swapChainImages);
     vkDestroySwapchainKHR(device, swapChain, NULL);
     vkDestroyDevice(device, NULL);
 
