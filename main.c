@@ -105,7 +105,18 @@ char *readFile(const char *filename, uint32_t *size);
 VkShaderModule createShaderModule(VkDevice device, const char *code,
                                   uint32_t size);
 
-/* void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex); */
+void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
+                         VkRenderPass renderPass,
+                         VkFramebuffer *swapChainFramebuffers,
+                         VkExtent2D swapChainExtent,
+                         VkPipeline graphicsPipeline);
+void drawFrame(VkDevice device, VkFence inFlightFence, VkSwapchainKHR swapChain,
+               VkSemaphore imageAvailableSemaphore,
+               VkSemaphore renderFinishedSemaphore,
+               VkCommandBuffer commandBuffer, VkRenderPass renderPass,
+               VkFramebuffer *swapChainFramebuffers, VkExtent2D swapChainExtent,
+               VkPipeline graphicsPipeline, VkQueue graphicsQueue,
+               VkQueue presentQueue);
 
 int main(int argc, char *argv[]) {
     int rc = 0;
@@ -131,6 +142,9 @@ int main(int argc, char *argv[]) {
     VkFramebuffer *swapChainFramebuffers = NULL;
     VkCommandPool commandPool = NULL;
     VkCommandBuffer commandBuffer = NULL;
+    VkSemaphore imageAvailableSemaphore = NULL;
+    VkSemaphore renderFinishedSemaphore = NULL;
+    VkFence inFlightFence = NULL;
 
     /* init sdl */
     rc = SDL_Init(SDL_INIT_VIDEO);
@@ -464,12 +478,23 @@ int main(int argc, char *argv[]) {
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &colorAttachmentRef;
 
+        VkSubpassDependency dependency = { 0 };
+        dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependency.dstSubpass = 0;
+        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.srcAccessMask = 0;
+        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
         VkRenderPassCreateInfo renderPassInfo = { 0 };
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
         renderPassInfo.attachmentCount = 1;
         renderPassInfo.pAttachments = &colorAttachment;
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
+        renderPassInfo.dependencyCount = 1;
+        renderPassInfo.pDependencies = &dependency;
+
         if (vkCreateRenderPass(device, &renderPassInfo, NULL, &renderPass) !=
             VK_SUCCESS) {
             error_log("failed to create render pass!");
@@ -702,6 +727,26 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    /* create sync objects */
+    {
+        VkSemaphoreCreateInfo semaphoreInfo = { 0 };
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        VkFenceCreateInfo fenceInfo = { 0 };
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+        if (vkCreateSemaphore(device, &semaphoreInfo, NULL,
+                              &imageAvailableSemaphore) != VK_SUCCESS ||
+            vkCreateSemaphore(device, &semaphoreInfo, NULL,
+                              &renderFinishedSemaphore) != VK_SUCCESS ||
+            vkCreateFence(device, &fenceInfo, NULL, &inFlightFence) !=
+                VK_SUCCESS) {
+            error_log("failed to create semaphores!");
+            return 1;
+        }
+    }
+
     /* main loop */
     while (running) {
         /* process event */
@@ -713,9 +758,18 @@ int main(int argc, char *argv[]) {
                 break;
             }
         }
+        drawFrame(device, inFlightFence, swapChain, imageAvailableSemaphore,
+                  renderFinishedSemaphore, commandBuffer, renderPass,
+                  swapChainFramebuffers, swapChainExtent, graphicsPipeline,
+                  graphicsQueue, presentQueue);
     }
+    vkDeviceWaitIdle(device);
 
     /* clean up */
+    vkDestroySemaphore(device, imageAvailableSemaphore, NULL);
+    vkDestroySemaphore(device, renderFinishedSemaphore, NULL);
+    vkDestroyFence(device, inFlightFence, NULL);
+
     vkDestroyCommandPool(device, commandPool, NULL);
 
     for (int i = 0; i < swapChainImagesCount; i++) {
@@ -1109,4 +1163,56 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
         error_log("failed to record command buffer!");
         exit(1);
     }
+}
+
+void drawFrame(VkDevice device, VkFence inFlightFence, VkSwapchainKHR swapChain,
+               VkSemaphore imageAvailableSemaphore,
+               VkSemaphore renderFinishedSemaphore,
+               VkCommandBuffer commandBuffer, VkRenderPass renderPass,
+               VkFramebuffer *swapChainFramebuffers, VkExtent2D swapChainExtent,
+               VkPipeline graphicsPipeline, VkQueue graphicsQueue,
+               VkQueue presentQueue) {
+    vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+    vkResetFences(device, 1, &inFlightFence);
+    uint32_t imageIndex;
+    vkAcquireNextImageKHR(device, swapChain, UINT64_MAX,
+                          imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+
+    vkResetCommandBuffer(commandBuffer, 0);
+    recordCommandBuffer(commandBuffer, imageIndex, renderPass,
+                        swapChainFramebuffers, swapChainExtent,
+                        graphicsPipeline);
+
+    VkSubmitInfo submitInfo = { 0 };
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
+    VkPipelineStageFlags waitStages[] = {
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+    };
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = waitSemaphores;
+    submitInfo.pWaitDstStageMask = waitStages;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+    VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = signalSemaphores;
+
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) !=
+        VK_SUCCESS) {
+        error_log("failed to submit draw command buffer!");
+        exit(1);
+    }
+
+    VkPresentInfoKHR presentInfo = { 0 };
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = signalSemaphores;
+    VkSwapchainKHR swapChains[] = { swapChain };
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = swapChains;
+    presentInfo.pImageIndices = &imageIndex;
+    presentInfo.pResults = NULL; // Optional
+    vkQueuePresentKHR(presentQueue, &presentInfo);
 }
