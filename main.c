@@ -149,13 +149,15 @@ void createSwapChain(struct sl_oo *oo);
 void createImageViews(struct sl_oo *oo);
 void createRenderPass(struct sl_oo *oo);
 void createGraphicsPipeline(struct sl_oo *oo);
-void createFrameBuffers(struct sl_oo *oo);
+void createFramebuffers(struct sl_oo *oo);
 void createCommandPool(struct sl_oo *oo);
 void createCommandBuffer(struct sl_oo *oo);
 void createSyncObjects(struct sl_oo *oo);
 
 void recreateSwapChain(struct sl_oo *oo);
+void drawFrame(struct sl_oo *oo);
 
+void cleanupSwapChain(struct sl_oo *oo);
 void cleanUp(struct sl_oo *oo);
 
 int main(int argc, char *argv[]) {
@@ -210,7 +212,7 @@ int main(int argc, char *argv[]) {
     createGraphicsPipeline(&oo);
 
     /* create framebuffers */
-    createFrameBuffers(&oo);
+    createFramebuffers(&oo);
 
     /* create command pool */
     createCommandPool(&oo);
@@ -1143,7 +1145,7 @@ void createGraphicsPipeline(struct sl_oo *oo) {
     free(fragShaderCode);
 }
 
-void createFrameBuffers(struct sl_oo *oo) {
+void createFramebuffers(struct sl_oo *oo) {
     oo->swapChainFramebuffers =
         malloc(sizeof(VkFramebuffer) * oo->swapChainImagesCount);
 
@@ -1224,6 +1226,13 @@ void createSyncObjects(struct sl_oo *oo) {
 }
 
 void cleanUp(struct sl_oo *oo) {
+    cleanupSwapChain(oo);
+
+    vkDestroyPipeline(oo->device, oo->graphicsPipeline, NULL);
+    vkDestroyPipelineLayout(oo->device, oo->pipelineLayout, NULL);
+
+    vkDestroyRenderPass(oo->device, oo->renderPass, NULL);
+
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroySemaphore(oo->device, oo->imageAvailableSemaphores[i], NULL);
         vkDestroySemaphore(oo->device, oo->renderFinishedSemaphores[i], NULL);
@@ -1236,22 +1245,6 @@ void cleanUp(struct sl_oo *oo) {
     vkDestroyCommandPool(oo->device, oo->commandPool, NULL);
     free(oo->commandBuffers);
 
-    for (int i = 0; i < oo->swapChainImagesCount; i++) {
-        vkDestroyFramebuffer(oo->device, oo->swapChainFramebuffers[i], NULL);
-    }
-    free(oo->swapChainFramebuffers);
-
-    vkDestroyPipeline(oo->device, oo->graphicsPipeline, NULL);
-    vkDestroyPipelineLayout(oo->device, oo->pipelineLayout, NULL);
-    vkDestroyRenderPass(oo->device, oo->renderPass, NULL);
-
-    for (int i = 0; i < oo->swapChainImagesCount; i++) {
-        vkDestroyImageView(oo->device, oo->swapChainImageViews[i], NULL);
-    }
-    free(oo->swapChainImageViews);
-
-    free(oo->swapChainImages);
-    vkDestroySwapchainKHR(oo->device, oo->swapChain, NULL);
     vkDestroyDevice(oo->device, NULL);
 
     if (enableValidationLayers) {
@@ -1263,4 +1256,29 @@ void cleanUp(struct sl_oo *oo) {
 
     SDL_DestroyWindow(oo->window);
     SDL_Quit();
+}
+
+void cleanupSwapChain(struct sl_oo *oo) {
+    for (size_t i = 0; i < oo->swapChainImagesCount; i++) {
+        vkDestroyFramebuffer(oo->device, oo->swapChainFramebuffers[i], NULL);
+    }
+    free(oo->swapChainFramebuffers);
+
+    for (size_t i = 0; i < oo->swapChainImagesCount; i++) {
+        vkDestroyImageView(oo->device, oo->swapChainImageViews[i], NULL);
+    }
+    free(oo->swapChainImageViews);
+    free(oo->swapChainImages);
+
+    vkDestroySwapchainKHR(oo->device, oo->swapChain, NULL);
+}
+
+void recreateSwapChain(struct sl_oo *oo) {
+    vkDeviceWaitIdle(oo->device);
+
+    cleanupSwapChain(oo);
+
+    createSwapChain(oo);
+    createImageViews(oo);
+    createFramebuffers(oo);
 }
