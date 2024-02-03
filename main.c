@@ -135,6 +135,7 @@ struct sl_oo {
     VkSemaphore *imageAvailableSemaphores;
     VkSemaphore *renderFinishedSemaphores;
     VkFence *inFlightFences;
+    bool framebufferResized;
     uint32_t currentFrame;
 
     SDL_Window *window;
@@ -231,6 +232,9 @@ int main(int argc, char *argv[]) {
             switch (e.type) {
             case SDL_QUIT:
                 running = false;
+                break;
+            case SDL_WINDOWEVENT_SIZE_CHANGED:
+                oo.framebufferResized = true;
                 break;
             }
         }
@@ -608,11 +612,21 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex,
 void drawFrame(struct sl_oo *oo) {
     vkWaitForFences(oo->device, 1, &oo->inFlightFences[oo->currentFrame],
                     VK_TRUE, UINT64_MAX);
-    vkResetFences(oo->device, 1, &oo->inFlightFences[oo->currentFrame]);
+
     uint32_t imageIndex;
-    vkAcquireNextImageKHR(oo->device, oo->swapChain, UINT64_MAX,
-                          oo->imageAvailableSemaphores[oo->currentFrame],
-                          VK_NULL_HANDLE, &imageIndex);
+    VkResult result =
+        vkAcquireNextImageKHR(oo->device, oo->swapChain, UINT64_MAX,
+                              oo->imageAvailableSemaphores[oo->currentFrame],
+                              VK_NULL_HANDLE, &imageIndex);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        recreateSwapChain(oo);
+        return;
+    } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+        error_log("failed to acquire swap chain image!");
+        exit(1);
+    }
+
+    vkResetFences(oo->device, 1, &oo->inFlightFences[oo->currentFrame]);
 
     vkResetCommandBuffer(oo->commandBuffers[oo->currentFrame], 0);
     recordCommandBuffer(oo->commandBuffers[oo->currentFrame], imageIndex,
@@ -654,7 +668,15 @@ void drawFrame(struct sl_oo *oo) {
     presentInfo.pSwapchains = swapChains;
     presentInfo.pImageIndices = &imageIndex;
     presentInfo.pResults = NULL; // Optional
-    vkQueuePresentKHR(oo->presentQueue, &presentInfo);
+    result = vkQueuePresentKHR(oo->presentQueue, &presentInfo);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR ||
+        oo->framebufferResized) {
+        oo->framebufferResized = false;
+        recreateSwapChain(oo);
+    } else if (result != VK_SUCCESS) {
+        error_log("failed to present swap chain image!");
+        exit(1);
+    }
 
     oo->currentFrame = (oo->currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
@@ -1274,6 +1296,16 @@ void cleanupSwapChain(struct sl_oo *oo) {
 }
 
 void recreateSwapChain(struct sl_oo *oo) {
+    int width = 0;
+    int height = 0;
+    SDL_Vulkan_GetDrawableSize(oo->window, &width, &height);
+    while (width == 0 || height == 0) {
+        SDL_Vulkan_GetDrawableSize(oo->window, &width, &height);
+        /* I am not sure whether this is correct */
+        /* what is the equivalent of glfwWaitEvents in SDL? */
+        SDL_WaitEvent(NULL);
+    }
+
     vkDeviceWaitIdle(oo->device);
 
     cleanupSwapChain(oo);
